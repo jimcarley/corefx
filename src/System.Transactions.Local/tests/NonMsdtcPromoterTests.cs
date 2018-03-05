@@ -2,16 +2,20 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.Tracing;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace System.Transactions.Tests
 {
     public class NonMsdtcPromoterTests
     {
+        private readonly ITestOutputHelper output;
         public static string PromotedTokenString1 = "Promoted Token String Number 1";
         public static byte[] PromotedToken1 = StringToByteArray(PromotedTokenString1);
         public static Guid PromoterType1 = new Guid("D9A34FDF-D02A-4EED-98C3-5AD092355E17");
@@ -24,9 +28,15 @@ namespace System.Transactions.Tests
         private static PropertyInfo s_promoterTypePropertyInfo;
         private static FieldInfo s_promoterTypeDtcFieldInfo;
 
-        public NonMsdtcPromoterTests()
+        //public NonMsdtcPromoterTests()
+        //{
+        //    // reset the testFailures count back to 0 for each test case.
+        //    VerifySoftDependencies();
+        //}
+
+        public NonMsdtcPromoterTests(ITestOutputHelper output)
         {
-            // reset the testFailures count back to 0 for each test case.
+            this.output = output;
             VerifySoftDependencies();
         }
 
@@ -2177,7 +2187,22 @@ namespace System.Transactions.Tests
         public void PSPENonMsdtcTimeout(bool promote)
         {
             // tx timeout
-            TestCase_TransactionTimeout(promote);
+            using (var listener = new TestEventListener(new Guid("8ac2d80a-1f1a-431b-ace4-bff8824aef0b"), System.Diagnostics.Tracing.EventLevel.Verbose))
+            {
+                var events = new ConcurrentQueue<EventWrittenEventArgs>();
+
+                try
+                {
+                    listener.RunWithCallback(events.Enqueue, () =>
+                    {
+                        TestCase_TransactionTimeout(promote);
+                    });
+                }
+                finally
+                {
+                    HelperFunctions.DisplaySysTxTracing(output, events);
+                }
+            }
         }
 
         /// <summary>

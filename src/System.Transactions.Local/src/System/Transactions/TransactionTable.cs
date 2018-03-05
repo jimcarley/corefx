@@ -224,6 +224,7 @@ namespace System.Transactions
         // absolute timeout.
         internal int Add(InternalTransaction txNew)
         {
+            TransactionsEtwProvider etwLog = TransactionsEtwProvider.Log;
             // Tell the runtime that we are modifying global state.
             int readerIndex = 0;
 
@@ -236,6 +237,7 @@ namespace System.Transactions
                 {
                     if (!_timerEnabled)
                     {
+                        TraceTimerInfo(etwLog, "TxTable.Add Enabling timer");
                         if (!_timer.Change(_timerInterval, _timerInterval))
                         {
                             throw TransactionException.CreateInvalidOperationException(
@@ -251,6 +253,9 @@ namespace System.Transactions
                 txNew.CreationTime = CurrentTime;
 
                 AddIter(txNew);
+                TraceTimerInfo(etwLog, string.Format("TxTable.Add Added transaction with AbsoluteTimeout={0} at index {1}",
+                    txNew.AbsoluteTimeout.ToString(),
+                    txNew._bucketIndex.ToString()));
             }
             finally
             {
@@ -380,10 +385,26 @@ namespace System.Transactions
             tx._tableBucket = null;
         }
 
+        internal void TraceTimerInfo(TransactionsEtwProvider etwLog, string stringToTrace)
+        {
+            if (etwLog.IsEnabled())
+            {
+                string trace = String.Format("{0} : {1} : _timerEnabled={2}; _ticks={3};",
+                    DateTime.UtcNow.ToString(),
+                    stringToTrace,
+                    _timerEnabled.ToString(),
+                    _ticks.ToString());
+
+                etwLog.MethodEnter(TraceSourceType.TraceSourceBase, trace);
+            }
+        }
 
         // Process a timer event
         private void ThreadTimer(Object state)
         {
+            TransactionsEtwProvider etwLog = TransactionsEtwProvider.Log;
+            TraceTimerInfo(etwLog, "ThreadTimer enter");
+
             //
             // Theory of operation.
             //
@@ -404,6 +425,7 @@ namespace System.Transactions
             // Increment the number of ticks
             _ticks++;
             _lastTimerTime = DateTime.UtcNow.Ticks;
+            TraceTimerInfo(etwLog, "ThreadTimer incremented _ticks");
 
             //
             // First find the starting point of transactions that should time out.  Every transaction after
@@ -440,6 +462,7 @@ namespace System.Transactions
 
                     if (nextBucketSet == null)
                     {
+                        TraceTimerInfo(etwLog, "ThreadTimer disabling timer.");
                         //
                         // Special case to allow for disabling the timer.
                         //
@@ -499,6 +522,7 @@ namespace System.Transactions
                 // expires, the thread will walk the list again, find the appropriate BucketSet to pinch off, and
                 // then time out the transactions. This means that it is possible for a transaction to live a bit longer,
                 // but not much.
+                TraceTimerInfo(etwLog, string.Format("ThreadTimer pinching off bucket sets below lastBucketSet.AbsoluteTimeout = {0}", lastBucketSet.AbsoluteTimeout.ToString()));
                 WeakReference abortingSetsWeak =
                     (WeakReference)Interlocked.CompareExchange(ref lastBucketSet.nextSetWeak, null, nextWeakSet);
 
@@ -578,6 +602,8 @@ namespace System.Transactions
             // It will always have a head.
             do
             {
+                TransactionsEtwProvider etwLog = TransactionsEtwProvider.Log;
+                _table.TraceTimerInfo(etwLog, string.Format("BucketSet.TimeoutTransactions for bucket in bucketSet.AbsoluteTimeout = {0}", this.AbsoluteTimeout.ToString()));
                 currentBucket.TimeoutTransactions();
 
                 WeakReference nextWeakBucket = (WeakReference)currentBucket.nextBucketWeak;
@@ -673,6 +699,16 @@ namespace System.Transactions
                 InternalTransaction tx = _transactions[i];
                 if (tx != null)
                 {
+                    TransactionsEtwProvider etwLog = TransactionsEtwProvider.Log;
+                    if (etwLog.IsEnabled())
+                    {
+                        etwLog.MethodEnter(TraceSourceType.TraceSourceBase, string.Format("{0} : Bucket.TimeoutTransactions in bucketSet.AbsoluteTimeout = {1}; timing out transaction #{2} with AbsoluteTimeout={3} at index {4}",
+                            DateTime.UtcNow.ToString(),
+                            this._owningSet.AbsoluteTimeout.ToString(),
+                            tx._transactionHash,
+                            tx.AbsoluteTimeout.ToString(),
+                            tx._bucketIndex.ToString()));
+                    }
                     lock (tx)
                     {
                         tx.State.Timeout(tx);
